@@ -1,0 +1,2 @@
+# Diminuator
+Tequila technical test
