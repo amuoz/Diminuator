@@ -92,10 +92,16 @@ public:
 protected:
 	
 	/** Diminuator beam */
-	void OnDiminuator();
+	void OnStartDiminuator();
+
+	/** Diminuator beam */
+	void OnStopDiminuator();
 
 	/** Augmentator beam */
-	void OnAugmentator();
+	void OnStartAugmentator();
+
+	/** Augmentator beam */
+	void OnStopAugmentator();
 
 	/** Resets HMD orientation and position in VR. */
 	void OnResetVR();

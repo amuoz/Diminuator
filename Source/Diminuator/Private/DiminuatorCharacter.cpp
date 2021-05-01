@@ -121,8 +121,10 @@ void ADiminuatorCharacter::SetupPlayerInputComponent(class UInputComponent* Play
 	PlayerInputComponent->BindAction("Jump", IE_Released, this, &ACharacter::StopJumping);
 
 	// Bind fire event
-	PlayerInputComponent->BindAction("Diminuator", IE_Pressed, this, &ADiminuatorCharacter::OnDiminuator);
-	PlayerInputComponent->BindAction("Augmentator", IE_Pressed, this, &ADiminuatorCharacter::OnAugmentator);
+	PlayerInputComponent->BindAction("Diminuator", IE_Pressed, this, &ADiminuatorCharacter::OnStartDiminuator);
+	PlayerInputComponent->BindAction("Diminuator", IE_Released, this, &ADiminuatorCharacter::OnStopDiminuator);
+	PlayerInputComponent->BindAction("Augmentator", IE_Pressed, this, &ADiminuatorCharacter::OnStartAugmentator);
+	PlayerInputComponent->BindAction("Augmentator", IE_Released, this, &ADiminuatorCharacter::OnStopAugmentator);
 
 	PlayerInputComponent->BindAction("ResetVR", IE_Pressed, this, &ADiminuatorCharacter::OnResetVR);
 
@@ -139,21 +141,28 @@ void ADiminuatorCharacter::SetupPlayerInputComponent(class UInputComponent* Play
 	PlayerInputComponent->BindAxis("LookUpRate", this, &ADiminuatorCharacter::LookUpAtRate);
 }
 
-void ADiminuatorCharacter::OnDiminuator()
+void ADiminuatorCharacter::OnStartDiminuator()
 {
 	// DIMINUATOR beam
-	BeamComponent->OnFire(BeamMode::DIMINUATOR);
-
-	FireEffects();
+	BeamComponent->OnFire(BeamMode::DIMINUATOR, true);
 }
 
+void ADiminuatorCharacter::OnStopDiminuator()
+{
+	// DIMINUATOR beam
+	BeamComponent->OnFire(BeamMode::DIMINUATOR, false);
+}
 
-void ADiminuatorCharacter::OnAugmentator()
+void ADiminuatorCharacter::OnStartAugmentator()
 {
 	// AUGMENTATOR beam
-	BeamComponent->OnFire(BeamMode::AUGMENTATOR);
+	BeamComponent->OnFire(BeamMode::AUGMENTATOR, true);
+}
 
-	FireEffects();
+void ADiminuatorCharacter::OnStopAugmentator()
+{
+	// AUGMENTATOR beam
+	BeamComponent->OnFire(BeamMode::AUGMENTATOR, false);
 }
 
 void ADiminuatorCharacter::FireEffects()
@@ -161,7 +170,7 @@ void ADiminuatorCharacter::FireEffects()
 	// try and play the sound if specified
 	if (FireSound != nullptr)
 	{
-		//UGameplayStatics::PlaySoundAtLocation(this, FireSound, GetActorLocation());
+		UGameplayStatics::PlaySoundAtLocation(this, FireSound, GetActorLocation());
 	}
 
 	// try and play a firing animation if specified

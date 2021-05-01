@@ -26,19 +26,33 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Gameplay)
 	float BeamRange;
 
-	/* Ray line trace range */
+	/* Beam test impulse */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Gameplay)
 	float BeamImpulse;
+
+	/* Beam scaling speed */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Gameplay)
+	float BeamScaleSpeed;
 
 protected:
 	// Called when the game starts
 	virtual void BeginPlay() override;
+
+	void ShootBeam(BeamMode Mode, float DeltaTime);
+
+	FColor GetBeamColor(BeamMode Mode);
+
+	float GetBeamScale(BeamMode Mode);
 
 public:	
 	// Called every frame
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 
 	// Fire event
-	void OnFire(BeamMode Mode);
+	void OnFire(BeamMode Mode, bool Active);
 
+private:
+	// Controls beam activation
+	bool bDiminuatorActive;
+	bool bAugmentatorActive;
 };
