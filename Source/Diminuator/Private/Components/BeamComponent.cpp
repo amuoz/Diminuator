@@ -5,7 +5,8 @@
 
 #include "Engine/World.h"
 #include "DrawDebugHelpers.h"
-#include "Gameframework/Character.h"
+#include "DiminuatorCharacter.h"
+#include "PhysicsEngine/PhysicsHandleComponent.h"
 
 // Sets default values for this component's properties
 UBeamComponent::UBeamComponent()
@@ -22,6 +23,10 @@ UBeamComponent::UBeamComponent()
 	BeamScaleSpeed = 5.0f;
 	bDiminuatorActive = false;
 	bAugmentatorActive = false;
+
+	// Physics handle 
+	PhysicsHandleComponent = CreateDefaultSubobject<UPhysicsHandleComponent>(TEXT("PhysicsHandleComponent"));
+	PhysicsHandleComponent->SetActive(false);
 }
 
 // Called when the game starts
@@ -39,73 +44,172 @@ void UBeamComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorC
 	if (bDiminuatorActive && bAugmentatorActive)
 	{
 		// if both beams are active, merge colors and no transformation is applied
-		ShootBeam(BeamMode::BOTH, DeltaTime);	// Special mode?
+		BeamTransformation(BeamMode::BOTH, DeltaTime);	// Special mode?
 	}
 	else if (bDiminuatorActive)
 	{
-		ShootBeam(BeamMode::AUGMENTATOR, DeltaTime);
+		BeamTransformation(BeamMode::DIMINUATOR, DeltaTime);
 	}
 	else if (bAugmentatorActive)
 	{
-		ShootBeam(BeamMode::DIMINUATOR, DeltaTime);
+		BeamTransformation(BeamMode::AUGMENTATOR, DeltaTime);
 	}
 
 }
 
-void UBeamComponent::OnFire(BeamMode Mode, bool Active)
+void UBeamComponent::OnStartFire(BeamMode Mode)
+{
+	// If beam is active we allready have object
+	if(!IsBeamActive())
+	{
+		ShootBeam(Mode);
+	}
+	
+	if (Mode == BeamMode::DIMINUATOR)
+	{
+		bDiminuatorActive = true;
+	}
+	else if (Mode == BeamMode::AUGMENTATOR)
+	{
+		bAugmentatorActive = true;
+	}
+
+}
+
+void UBeamComponent::OnStopFire(BeamMode Mode)
 {
 	if (Mode == BeamMode::DIMINUATOR)
 	{
-		bDiminuatorActive = Active;
+		bDiminuatorActive = false;
+	}
+	else if (Mode == BeamMode::AUGMENTATOR)
+	{
+		bAugmentatorActive = false;
 	}
 
-	if (Mode == BeamMode::AUGMENTATOR)
+	// If beam is active we allready have object
+	if (!IsBeamActive())
 	{
-		bAugmentatorActive = Active;
+		StopBeam();
 	}
 }
 
-void UBeamComponent::ShootBeam(BeamMode Mode, float DeltaTime)
+void UBeamComponent::ShootBeam(BeamMode Mode)
 {
 	UWorld* const world = GetWorld();
 	if (world != nullptr)
 	{
-		ACharacter* character = Cast<ACharacter>(GetOwner());
+		// We can safely cast this because beam component is Within = DiminuatorCharacter
+		ADiminuatorCharacter* character = Cast<ADiminuatorCharacter>(GetOwner());
 		if (character != nullptr)
 		{
 			FHitResult outHit;
-			// We can safely cast this because beam component is Within = ACharacter
 			const FRotator spawnRotation = character->GetControlRotation();
-			// MuzzleOffset is in camera space, so transform it to world space before offsetting from the character location to find the final muzzle position
-			const FVector start = GetOwner()->GetActorLocation() + spawnRotation.RotateVector(GunOffset);
+			const FVector start = (character->GetFP_MuzzleLocation() != nullptr) ? character->GetFP_MuzzleLocation()->GetComponentLocation() : GetOwner()->GetActorLocation() + spawnRotation.RotateVector(GunOffset);
 			// The end location of line trace is start added with the rotation vector gives forward vector in any rotation
 			FVector end = start + (spawnRotation.Vector() * BeamRange);
 			FCollisionQueryParams params;
 			params.AddIgnoredActor(GetOwner());
 
-			// Launch beam!
-			DrawDebugLine(world, start, end, GetBeamColor(Mode), false, DeltaTime, 0, 2.0f);
+			// Beam effect
+			DrawDebugLine(world, start, end, GetBeamColor(Mode), false, -1.0f, 0, 2.0f);
 
-			// if both beams are active skip transformation
-			if (Mode != BeamMode::BOTH)
+			// Launch beam raycast searching for object
+			bool bHit = world->LineTraceSingleByChannel(outHit, start, end, ECollisionChannel::ECC_Visibility, params);
+			if (bHit)
 			{
-				bool bHit = world->LineTraceSingleByChannel(outHit, start, end, ECollisionChannel::ECC_Visibility, params);
-				// Scale transformation logic
-				if (bHit)
+				AActor* hitActor = outHit.GetActor();
+				UPrimitiveComponent* hitComp = outHit.GetComponent();
+				// lets make sure the object is valid
+				if ((hitActor != nullptr) && (hitActor != GetOwner()) && (hitComp != nullptr) && hitComp->IsSimulatingPhysics())
 				{
-					AActor* hitActor = outHit.GetActor();
-					UPrimitiveComponent* hitComp = outHit.GetComponent();
-
-					if ((hitActor != nullptr) && (hitActor != GetOwner()) && (hitComp != nullptr))
-					{
-						FVector scaleTransformation = hitComp->GetRelativeScale3D() + GetBeamScale(Mode) * DeltaTime;
-						hitComp->SetRelativeScale3D(scaleTransformation);
-					}
+					// Grab physics object
+					HitComponent = hitComp;
+					HitLocation = outHit.Location;
 				}
 			}
-
 		}
 	}
+}
+
+void UBeamComponent::StopBeam()
+{
+	if (PhysicsHandleComponent->IsActive())
+	{
+		PhysicsHandleComponent->SetActive(false);
+		PhysicsHandleComponent->ReleaseComponent();
+	}
+
+	if (HitComponent)
+	{
+		HitComponent->SetSimulatePhysics(true);
+		HitComponent = nullptr;
+		HitLocation = FVector();
+	}
+}
+
+void UBeamComponent::BeamTransformation(BeamMode Mode, float DeltaTime)
+{
+	UWorld* const world = GetWorld();
+	if (world != nullptr)
+	{
+		// We can safely cast this because beam component is Within = DiminuatorCharacter
+		ADiminuatorCharacter* character = Cast<ADiminuatorCharacter>(GetOwner());
+		if (character != nullptr)
+		{
+			//UPrimitiveComponent* hitComp = PhysicsHandleComponent->GetGrabbedComponent();
+			if (HitComponent != nullptr)
+			{
+				// We can safely cast this because beam component is Within = ACharacter
+				const FRotator spawnRotation = character->GetControlRotation();
+				// MuzzleOffset is in camera space, so transform it to world space before offsetting from the character location to find the final muzzle position
+				const FVector start = (character->GetFP_MuzzleLocation() != nullptr) ? character->GetFP_MuzzleLocation()->GetComponentLocation() : GetOwner()->GetActorLocation() + spawnRotation.RotateVector(GunOffset);
+
+				if (Mode == BeamMode::BOTH)
+				{
+					HitComponent->SetSimulatePhysics(true);
+
+					// The end location of line trace is start added with the rotation vector gives forward vector in any rotation
+					FVector end = start + (spawnRotation.Vector() * (start - HitLocation).Size());
+					// Beam effect
+					DrawDebugLine(world, start, end, GetBeamColor(Mode), false, -1.0f, 0, 2.0f);
+
+					if (!PhysicsHandleComponent->IsActive())
+					{
+						PhysicsHandleComponent->SetActive(true);
+						PhysicsHandleComponent->GrabComponentAtLocation(HitComponent, NAME_None, end);
+					}
+					else
+					{
+						PhysicsHandleComponent->SetTargetLocation(end);
+					}
+
+				}
+				else
+				{
+					if (PhysicsHandleComponent->IsActive())
+					{
+						PhysicsHandleComponent->SetActive(false);
+						PhysicsHandleComponent->ReleaseComponent();
+					}
+
+					// turn off physics for the object to freeze in the air
+					HitComponent->SetSimulatePhysics(false);
+					FVector scaleTransformation = HitComponent->GetRelativeScale3D() + GetBeamScale(Mode) * DeltaTime;
+					HitComponent->SetRelativeScale3D(scaleTransformation);
+					FVector hitTransformation = HitLocation + GetBeamScale(Mode) * DeltaTime;
+					HitLocation = hitTransformation;
+					// turn on physics to recalculate collisions in physics step
+					HitComponent->SetSimulatePhysics(true);
+
+					// Beam effect
+					DrawDebugLine(world, start, hitTransformation, GetBeamColor(Mode), false, -1.0f, 0, 2.0f);
+				}
+
+			}
+		}
+	}
+
 }
 
 FColor UBeamComponent::GetBeamColor(BeamMode Mode)
@@ -143,4 +247,9 @@ float UBeamComponent::GetBeamScale(BeamMode Mode)
 	}
 
 	return 0.0f;
+}
+
+bool UBeamComponent::IsBeamActive()
+{
+	return bDiminuatorActive || bAugmentatorActive;
 }

@@ -143,26 +143,22 @@ void ADiminuatorCharacter::SetupPlayerInputComponent(class UInputComponent* Play
 
 void ADiminuatorCharacter::OnStartDiminuator()
 {
-	// DIMINUATOR beam
-	BeamComponent->OnFire(BeamMode::DIMINUATOR, true);
+	BeamComponent->OnStartFire(BeamMode::DIMINUATOR);
 }
 
 void ADiminuatorCharacter::OnStopDiminuator()
 {
-	// DIMINUATOR beam
-	BeamComponent->OnFire(BeamMode::DIMINUATOR, false);
+	BeamComponent->OnStopFire(BeamMode::DIMINUATOR);
 }
 
 void ADiminuatorCharacter::OnStartAugmentator()
 {
-	// AUGMENTATOR beam
-	BeamComponent->OnFire(BeamMode::AUGMENTATOR, true);
+	BeamComponent->OnStartFire(BeamMode::AUGMENTATOR);
 }
 
 void ADiminuatorCharacter::OnStopAugmentator()
 {
-	// AUGMENTATOR beam
-	BeamComponent->OnFire(BeamMode::AUGMENTATOR, false);
+	BeamComponent->OnStopFire(BeamMode::AUGMENTATOR);
 }
 
 void ADiminuatorCharacter::FireEffects()

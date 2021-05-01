@@ -8,13 +8,15 @@
 
 #include "BeamComponent.generated.h"
 
+class UPhysicsHandleComponent;
 
-UCLASS( ClassGroup=(Custom), meta=(BlueprintSpawnableComponent), Within = Character)
+UCLASS( ClassGroup=(Custom), meta=(BlueprintSpawnableComponent), Within = DiminuatorCharacter)
 class DIMINUATOR_API UBeamComponent : public UActorComponent
 {
 	GENERATED_BODY()
 
-public:	
+public:
+
 	// Sets default values for this component's properties
 	UBeamComponent();
 
@@ -35,24 +37,43 @@ public:
 	float BeamScaleSpeed;
 
 protected:
+
+	UPROPERTY(VisibleDefaultsOnly, Category = Physics)
+	UPhysicsHandleComponent* PhysicsHandleComponent;
+
+	// Controls beam activation
+	bool bDiminuatorActive;
+
+	bool bAugmentatorActive;
+
+	UPrimitiveComponent* HitComponent;
+	FVector HitLocation;
+
+public:
+
+	// Called every frame
+	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
+
+	// Fire event
+	void OnStartFire(BeamMode Mode);
+
+	// Fire event
+	void OnStopFire(BeamMode Mode);
+
+protected:
+
 	// Called when the game starts
 	virtual void BeginPlay() override;
 
-	void ShootBeam(BeamMode Mode, float DeltaTime);
+	void ShootBeam(BeamMode Mode);
+
+	void StopBeam();
+
+	void BeamTransformation(BeamMode Mode, float DeltaTime);
 
 	FColor GetBeamColor(BeamMode Mode);
 
 	float GetBeamScale(BeamMode Mode);
 
-public:	
-	// Called every frame
-	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
-
-	// Fire event
-	void OnFire(BeamMode Mode, bool Active);
-
-private:
-	// Controls beam activation
-	bool bDiminuatorActive;
-	bool bAugmentatorActive;
+	bool IsBeamActive();
 };
