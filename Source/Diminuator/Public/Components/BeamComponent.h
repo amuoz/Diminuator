@@ -36,6 +36,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Gameplay)
 	float BeamScaleSpeed;
 
+	/* Interpolation physics handle speed */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Gameplay)
+	float InterpolationSpeed;
+
 protected:
 
 	UPROPERTY(VisibleDefaultsOnly, Category = Physics)
@@ -46,8 +50,7 @@ protected:
 
 	bool bAugmentatorActive;
 
-	UPrimitiveComponent* HitComponent;
-	FVector HitLocation;
+	float GrabDistance;
 
 public:
 
@@ -65,11 +68,7 @@ protected:
 	// Called when the game starts
 	virtual void BeginPlay() override;
 
-	void ShootBeam(BeamMode Mode);
-
-	void StopBeam();
-
-	void BeamTransformation(BeamMode Mode, float DeltaTime);
+	void ShootBeam(BeamMode Mode, float DeltaTime);
 
 	FColor GetBeamColor(BeamMode Mode);
 

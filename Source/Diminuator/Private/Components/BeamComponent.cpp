@@ -33,7 +33,6 @@ UBeamComponent::UBeamComponent()
 void UBeamComponent::BeginPlay()
 {
 	Super::BeginPlay();
-	
 }
 
 // Called every frame
@@ -44,27 +43,21 @@ void UBeamComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorC
 	if (bDiminuatorActive && bAugmentatorActive)
 	{
 		// if both beams are active, merge colors and no transformation is applied
-		BeamTransformation(BeamMode::BOTH, DeltaTime);	// Special mode?
+		ShootBeam(BeamMode::BOTH, DeltaTime);	// Special mode?
 	}
 	else if (bDiminuatorActive)
 	{
-		BeamTransformation(BeamMode::DIMINUATOR, DeltaTime);
+		ShootBeam(BeamMode::DIMINUATOR, DeltaTime);
 	}
 	else if (bAugmentatorActive)
 	{
-		BeamTransformation(BeamMode::AUGMENTATOR, DeltaTime);
+		ShootBeam(BeamMode::AUGMENTATOR, DeltaTime);
 	}
 
 }
 
 void UBeamComponent::OnStartFire(BeamMode Mode)
 {
-	// If beam is active we allready have object
-	if(!IsBeamActive())
-	{
-		ShootBeam(Mode);
-	}
-	
 	if (Mode == BeamMode::DIMINUATOR)
 	{
 		bDiminuatorActive = true;
@@ -87,14 +80,18 @@ void UBeamComponent::OnStopFire(BeamMode Mode)
 		bAugmentatorActive = false;
 	}
 
-	// If beam is active we allready have object
 	if (!IsBeamActive())
 	{
-		StopBeam();
+		if (PhysicsHandleComponent->IsActive())
+		{
+			PhysicsHandleComponent->SetActive(false);
+			PhysicsHandleComponent->ReleaseComponent();
+		}
 	}
+
 }
 
-void UBeamComponent::ShootBeam(BeamMode Mode)
+void UBeamComponent::ShootBeam(BeamMode Mode, float DeltaTime)
 {
 	UWorld* const world = GetWorld();
 	if (world != nullptr)
@@ -111,79 +108,50 @@ void UBeamComponent::ShootBeam(BeamMode Mode)
 			FCollisionQueryParams params;
 			params.AddIgnoredActor(GetOwner());
 
-			// Beam effect
-			DrawDebugLine(world, start, end, GetBeamColor(Mode), false, -1.0f, 0, 2.0f);
-
 			// Launch beam raycast searching for object
 			bool bHit = world->LineTraceSingleByChannel(outHit, start, end, ECollisionChannel::ECC_Visibility, params);
 			if (bHit)
 			{
+				// Beam effect hit
+				DrawDebugLine(world, start, outHit.Location, GetBeamColor(Mode), false, -1.0f, 0, 2.0f);
+
 				AActor* hitActor = outHit.GetActor();
 				UPrimitiveComponent* hitComp = outHit.GetComponent();
 				// lets make sure the object is valid
 				if ((hitActor != nullptr) && (hitActor != GetOwner()) && (hitComp != nullptr) && hitComp->IsSimulatingPhysics())
 				{
-					// Grab physics object
-					HitComponent = hitComp;
-					HitLocation = outHit.Location;
-				}
-			}
-		}
-	}
-}
-
-void UBeamComponent::StopBeam()
-{
-	if (PhysicsHandleComponent->IsActive())
-	{
-		PhysicsHandleComponent->SetActive(false);
-		PhysicsHandleComponent->ReleaseComponent();
-	}
-
-	if (HitComponent)
-	{
-		HitComponent->SetSimulatePhysics(true);
-		HitComponent = nullptr;
-		HitLocation = FVector();
-	}
-}
-
-void UBeamComponent::BeamTransformation(BeamMode Mode, float DeltaTime)
-{
-	UWorld* const world = GetWorld();
-	if (world != nullptr)
-	{
-		// We can safely cast this because beam component is Within = DiminuatorCharacter
-		ADiminuatorCharacter* character = Cast<ADiminuatorCharacter>(GetOwner());
-		if (character != nullptr)
-		{
-			//UPrimitiveComponent* hitComp = PhysicsHandleComponent->GetGrabbedComponent();
-			if (HitComponent != nullptr)
-			{
-				// We can safely cast this because beam component is Within = ACharacter
-				const FRotator spawnRotation = character->GetControlRotation();
-				// MuzzleOffset is in camera space, so transform it to world space before offsetting from the character location to find the final muzzle position
-				const FVector start = (character->GetFP_MuzzleLocation() != nullptr) ? character->GetFP_MuzzleLocation()->GetComponentLocation() : GetOwner()->GetActorLocation() + spawnRotation.RotateVector(GunOffset);
-
-				if (Mode == BeamMode::BOTH)
-				{
-					HitComponent->SetSimulatePhysics(true);
-
-					// The end location of line trace is start added with the rotation vector gives forward vector in any rotation
-					FVector end = start + (spawnRotation.Vector() * (start - HitLocation).Size());
-					// Beam effect
-					DrawDebugLine(world, start, end, GetBeamColor(Mode), false, -1.0f, 0, 2.0f);
-
-					if (!PhysicsHandleComponent->IsActive())
+					if (Mode == BeamMode::BOTH)
 					{
-						PhysicsHandleComponent->SetActive(true);
-						PhysicsHandleComponent->GrabComponentAtLocation(HitComponent, NAME_None, end);
+						//FVector grabEnd = start + (spawnRotation.Vector() * (start - outHit.Location).Size());
+						if (hitComp != PhysicsHandleComponent->GetGrabbedComponent())
+						{
+							// The end location of line trace is start added with the rotation vector gives forward vector in any rotation
+							PhysicsHandleComponent->SetActive(true);
+							PhysicsHandleComponent->GrabComponentAtLocationWithRotation(hitComp, outHit.BoneName, hitComp->GetComponentLocation(), hitComp->GetComponentRotation());
+							//GrabDistance = (start - outHit.Location).Size();
+							GrabDistance = (start - hitComp->GetComponentLocation()).Size();
+						}
+						else
+						{
+							FVector grabEnd = start + (spawnRotation.Vector() * GrabDistance);
+							PhysicsHandleComponent->SetTargetLocationAndRotation(grabEnd, hitComp->GetComponentRotation());
+						}
 					}
 					else
 					{
-						PhysicsHandleComponent->SetTargetLocation(end);
-					}
+						if (PhysicsHandleComponent->IsActive())
+						{
+							PhysicsHandleComponent->SetActive(false);
+							PhysicsHandleComponent->ReleaseComponent();
+						}
 
+						// turn off physics for the object to freeze in the air
+						hitComp->SetSimulatePhysics(false);
+						FVector scaleTransformation = hitComp->GetRelativeScale3D() + GetBeamScale(Mode) * DeltaTime;
+						hitComp->SetRelativeScale3D(scaleTransformation);
+						// turn on physics to recalculate collisions in physics step
+						hitComp->SetSimulatePhysics(true);
+					}
 				}
 				else
 				{
@@ -192,20 +160,19 @@ void UBeamComponent::BeamTransformation(BeamMode Mode, float DeltaTime)
 						PhysicsHandleComponent->SetActive(false);
 						PhysicsHandleComponent->ReleaseComponent();
 					}
-
-					// turn off physics for the object to freeze in the air
-					HitComponent->SetSimulatePhysics(false);
-					FVector scaleTransformation = HitComponent->GetRelativeScale3D() + GetBeamScale(Mode) * DeltaTime;
-					HitComponent->SetRelativeScale3D(scaleTransformation);
-					FVector hitTransformation = HitLocation + GetBeamScale(Mode) * DeltaTime;
-					HitLocation = hitTransformation;
-					// turn on physics to recalculate collisions in physics step
-					HitComponent->SetSimulatePhysics(true);
-
-					// Beam effect
-					DrawDebugLine(world, start, hitTransformation, GetBeamColor(Mode), false, -1.0f, 0, 2.0f);
 				}
 
+			}
+			else
+			{
+				// Beam effect no collision
+				DrawDebugLine(world, start, end, GetBeamColor(Mode), false, -1.0f, 0, 2.0f);
+
+				if (PhysicsHandleComponent->IsActive())
+				{
+					PhysicsHandleComponent->SetActive(false);
+					PhysicsHandleComponent->ReleaseComponent();
+				}
 			}
 		}
 	}
