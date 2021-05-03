@@ -23,6 +23,7 @@ UBeamComponent::UBeamComponent()
 	BeamScaleSpeed = 5.0f;
 	bDiminuatorActive = false;
 	bAugmentatorActive = false;
+	BeamThickness = 3.0f;
 
 	// Physics handle 
 	PhysicsHandleComponent = CreateDefaultSubobject<UPhysicsHandleComponent>(TEXT("PhysicsHandleComponent"));
@@ -33,6 +34,7 @@ UBeamComponent::UBeamComponent()
 void UBeamComponent::BeginPlay()
 {
 	Super::BeginPlay();
+	PhysicsHandleComponent->SetLinearDamping(100.0f);
 }
 
 // Called every frame
@@ -107,72 +109,114 @@ void UBeamComponent::ShootBeam(BeamMode Mode, float DeltaTime)
 			FVector end = start + (spawnRotation.Vector() * BeamRange);
 			FCollisionQueryParams params;
 			params.AddIgnoredActor(GetOwner());
+			//const FName TraceTag("MyTraceTag");
+			//GetWorld()->DebugDrawTraceTag = TraceTag;
+			//params.TraceTag = TraceTag;
 
 			// Launch beam raycast searching for object
 			bool bHit = world->LineTraceSingleByChannel(outHit, start, end, ECollisionChannel::ECC_Visibility, params);
 			if (bHit)
 			{
 				// Beam effect hit
-				DrawDebugLine(world, start, outHit.Location, GetBeamColor(Mode), false, -1.0f, 0, 2.0f);
+				DrawDebugLine(world, start, outHit.Location, GetBeamColor(Mode), false, -1.0f, 0, BeamThickness);
 
 				AActor* hitActor = outHit.GetActor();
 				UPrimitiveComponent* hitComp = outHit.GetComponent();
 				// lets make sure the object is valid
-				if ((hitActor != nullptr) && (hitActor != GetOwner()) && (hitComp != nullptr) && hitComp->IsSimulatingPhysics())
+				if ((hitActor != nullptr) && (hitActor != GetOwner()) && (hitComp != nullptr))
 				{
-					if (Mode == BeamMode::BOTH)
+					// physics actor interaction
+					if (hitComp->IsSimulatingPhysics())
 					{
-						//FVector grabEnd = start + (spawnRotation.Vector() * (start - outHit.Location).Size());
-						if (hitComp != PhysicsHandleComponent->GetGrabbedComponent())
+						if (Mode == BeamMode::BOTH)
 						{
-							// The end location of line trace is start added with the rotation vector gives forward vector in any rotation
-							PhysicsHandleComponent->SetActive(true);
-							PhysicsHandleComponent->GrabComponentAtLocationWithRotation(hitComp, outHit.BoneName, hitComp->GetComponentLocation(), hitComp->GetComponentRotation());
-							//GrabDistance = (start - outHit.Location).Size();
-							GrabDistance = (start - hitComp->GetComponentLocation()).Size();
+							//FVector grabEnd = start + (spawnRotation.Vector() * (start - outHit.Location).Size());
+							if (hitComp != PhysicsHandleComponent->GetGrabbedComponent())
+							{
+								// The end location of line trace is start added with the rotation vector gives forward vector in any rotation
+								PhysicsHandleComponent->SetActive(true);
+								PhysicsHandleComponent->GrabComponentAtLocationWithRotation(hitComp, outHit.BoneName, hitComp->GetComponentLocation(), hitComp->GetComponentRotation());
+								//GrabDistance = (start - outHit.Location).Size();
+								GrabDistance = (start - hitComp->GetComponentLocation()).Size();
+							}
+							else
+							{
+								//FVector grabEnd = start + (spawnRotation.Vector() * GrabDistance);
+								//PhysicsHandleComponent->SetTargetLocationAndRotation(grabEnd, hitComp->GetComponentRotation());
+							}
 						}
 						else
 						{
-							FVector grabEnd = start + (spawnRotation.Vector() * GrabDistance);
-							PhysicsHandleComponent->SetTargetLocationAndRotation(grabEnd, hitComp->GetComponentRotation());
+							if (PhysicsHandleComponent->IsActive())
+							{
+								PhysicsHandleComponent->SetActive(false);
+								PhysicsHandleComponent->ReleaseComponent();
+							}
+
+							// turn off physics for the object to freeze in the air
+							hitComp->SetSimulatePhysics(false);
+							FVector scaleTransformation = hitComp->GetRelativeScale3D() + GetBeamScale(Mode) * DeltaTime;
+							hitComp->SetRelativeScale3D(scaleTransformation);
+							// turn on physics to recalculate collisions in physics step
+							hitComp->SetSimulatePhysics(true);
 						}
 					}
+					// static actor hit
 					else
 					{
-						if (PhysicsHandleComponent->IsActive())
+						// check if beam is far from the grabbed object
+						if (PhysicsHandleComponent->IsActive() && PhysicsHandleComponent->GetGrabbedComponent() != nullptr)
 						{
-							PhysicsHandleComponent->SetActive(false);
-							PhysicsHandleComponent->ReleaseComponent();
-						}
+							// Grab point
+							FVector grabEnd = (spawnRotation.Vector() * GrabDistance);
+							FVector grabComp = PhysicsHandleComponent->GetGrabbedComponent()->GetComponentLocation() - start;
 
-						// turn off physics for the object to freeze in the air
-						hitComp->SetSimulatePhysics(false);
-						FVector scaleTransformation = hitComp->GetRelativeScale3D() + GetBeamScale(Mode) * DeltaTime;
-						hitComp->SetRelativeScale3D(scaleTransformation);
-						// turn on physics to recalculate collisions in physics step
-						hitComp->SetSimulatePhysics(true);
+							float distance = (grabComp - grabEnd).Size() - PhysicsHandleComponent->GetGrabbedComponent()->Bounds.BoxExtent.X/2;
+							UE_LOG(LogTemp, Warning, TEXT("Distance: %f"), distance);							
+
+							//DrawDebugLine(world, start, grabEnd, FColor::Yellow, true, -1.0f, 0, 1.0f);
+							//DrawDebugLine(world, start, grabComp, FColor::Orange, true, -1.0f, 0, 1.0f);
+
+							/*
+							grabEnd.Normalize();
+							grabComp.Normalize();
+
+							UE_LOG(LogTemp, Warning, TEXT("grabEnd: %s"), *(grabEnd.ToString()));
+							UE_LOG(LogTemp, Warning, TEXT("grabComp: %s"), *(grabComp.ToString()));
+
+							float AimAtAngle = FMath::RadiansToDegrees(acosf(FVector::DotProduct(grabEnd, grabComp)));
+							UE_LOG(LogTemp, Warning, TEXT("Angle: %f"), AimAtAngle);
+							
+							//if (FVector::Distance(outHit.Location, grabEnd) > 1000.0f)	// bad approach
+							float dotProduct = FVector::DotProduct(
+								grabEnd,
+								grabComp);
+							UE_LOG(LogTemp, Warning, TEXT("dotProduct: %f"), dotProduct);
+							*/
+
+							if (distance > 200.0f)
+							{
+								// Beam disconnection
+								PhysicsHandleComponent->SetActive(false);
+								PhysicsHandleComponent->ReleaseComponent();
+							}
+						}
 					}
-				}
-				else
-				{
-					if (PhysicsHandleComponent->IsActive())
-					{
-						PhysicsHandleComponent->SetActive(false);
-						PhysicsHandleComponent->ReleaseComponent();
-					}
+					
 				}
 
 			}
 			else
 			{
 				// Beam effect no collision
-				DrawDebugLine(world, start, end, GetBeamColor(Mode), false, -1.0f, 0, 2.0f);
+				DrawDebugLine(world, start, end, GetBeamColor(Mode), false, -1.0f, 0, BeamThickness);
+			}
 
-				if (PhysicsHandleComponent->IsActive())
-				{
-					PhysicsHandleComponent->SetActive(false);
-					PhysicsHandleComponent->ReleaseComponent();
-				}
+			// check if grabbed something
+			if (PhysicsHandleComponent->IsActive() && PhysicsHandleComponent->GetGrabbedComponent())
+			{
+				FVector grabEnd = start + (spawnRotation.Vector() * GrabDistance);
+				PhysicsHandleComponent->SetTargetLocationAndRotation(grabEnd, PhysicsHandleComponent->GetGrabbedComponent()->GetComponentRotation());
 			}
 		}
 	}

@@ -38,7 +38,7 @@ public:
 
 	/* Interpolation physics handle speed */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Gameplay)
-	float InterpolationSpeed;
+	float BeamThickness;
 
 protected:
 
