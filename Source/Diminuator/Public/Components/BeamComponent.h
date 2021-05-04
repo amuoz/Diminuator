@@ -40,6 +40,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Gameplay)
 	float BeamThickness;
 
+	/* Interpolation physics handle speed */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Gameplay)
+	UMaterial* GlassMaterial;
+
 protected:
 
 	UPROPERTY(VisibleDefaultsOnly, Category = Physics)
@@ -75,4 +79,10 @@ protected:
 	float GetBeamScale(BeamMode Mode);
 
 	bool IsBeamActive();
+
+	bool CheckScaleCollisions(UPrimitiveComponent* Component);
+
+	bool CheckVertexCollisions(UPrimitiveComponent* Component, FVector Direction, FVector Vertex);
+
+	bool IsGlassMaterial(const UMaterial* Material);
 };
