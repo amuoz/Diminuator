@@ -8,6 +8,7 @@
 #include "DiminuatorCharacter.h"
 #include "PhysicsEngine/PhysicsHandleComponent.h"
 #include "Components/MeshComponent.h"
+#include "TimerManager.h"
 
 // Sets default values for this component's properties
 UBeamComponent::UBeamComponent()
@@ -25,10 +26,13 @@ UBeamComponent::UBeamComponent()
 	bDiminuatorActive = false;
 	bAugmentatorActive = false;
 	BeamThickness = 3.0f;
+	GrabLinearDamping = 60.0f;
 
 	// Physics handle 
 	PhysicsHandleComponent = CreateDefaultSubobject<UPhysicsHandleComponent>(TEXT("PhysicsHandleComponent"));
-	PhysicsHandleComponent->SetLinearDamping(40.0f);
+	PhysicsHandleComponent->bInterpolateTarget = false;
+	PhysicsHandleComponent->bAllowConcurrentTick = true;
+	PhysicsHandleComponent->SetLinearDamping(GrabLinearDamping);
 	PhysicsHandleComponent->SetActive(false);
 }
 
@@ -36,7 +40,6 @@ UBeamComponent::UBeamComponent()
 void UBeamComponent::BeginPlay()
 {
 	Super::BeginPlay();
-	
 }
 
 // Called every frame
@@ -47,7 +50,7 @@ void UBeamComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorC
 	if (bDiminuatorActive && bAugmentatorActive)
 	{
 		// if both beams are active, merge colors and no transformation is applied
-		ShootBeam(BeamMode::BOTH, DeltaTime);	// Special mode?
+		ShootBeam(BeamMode::GRAB, DeltaTime);
 	}
 	else if (bDiminuatorActive)
 	{
@@ -70,7 +73,6 @@ void UBeamComponent::OnStartFire(BeamMode Mode)
 	{
 		bAugmentatorActive = true;
 	}
-
 }
 
 void UBeamComponent::OnStopFire(BeamMode Mode)
@@ -116,12 +118,14 @@ void UBeamComponent::ShootBeam(BeamMode Mode, float DeltaTime)
 			//params.TraceTag = TraceTag;
 
 			// if something is grabbed check if there is collision between the beam and the object ideal location
-			if (Mode == BeamMode::BOTH && PhysicsHandleComponent->IsActive() && PhysicsHandleComponent->GetGrabbedComponent())
+			/*
+			if (Mode == BeamMode::GRAB && PhysicsHandleComponent->IsActive() && PhysicsHandleComponent->GetGrabbedComponent())
 			{
 				end = start + (spawnRotation.Vector() * GrabDistance);
 				params.AddIgnoredActor(PhysicsHandleComponent->GetGrabbedComponent()->GetOwner());
 			}
-
+			*/
+			
 			// Launch beam raycast searching for object
 			bool bHit = world->LineTraceSingleByChannel(outHit, start, end, ECollisionChannel::ECC_Visibility, params);
 			if (bHit)
@@ -138,8 +142,10 @@ void UBeamComponent::ShootBeam(BeamMode Mode, float DeltaTime)
 					// physics actor interaction
 					if (hitComp->IsSimulatingPhysics())
 					{
-						if (Mode == BeamMode::BOTH)
+						if (Mode == BeamMode::GRAB)
 						{
+							GetWorld()->GetTimerManager().ClearTimer(StuckTimerHandle);
+
 							//FVector grabEnd = start + (spawnRotation.Vector() * (start - outHit.Location).Size());
 							if (hitComp != PhysicsHandleComponent->GetGrabbedComponent())
 							{
@@ -148,6 +154,7 @@ void UBeamComponent::ShootBeam(BeamMode Mode, float DeltaTime)
 								PhysicsHandleComponent->GrabComponentAtLocationWithRotation(hitComp, outHit.BoneName, hitComp->GetComponentLocation(), hitComp->GetComponentRotation());
 								//GrabDistance = (start - outHit.Location).Size();
 								GrabDistance = (start - hitComp->GetComponentLocation()).Size();
+								UE_LOG(LogTemp, Warning, TEXT("GrabDistance: %f"), GrabDistance);
 							}
 						}
 						else
@@ -182,26 +189,40 @@ void UBeamComponent::ShootBeam(BeamMode Mode, float DeltaTime)
 					// static actor hit
 					else
 					{
-						// check if beam is far from the grabbed object
-						if (PhysicsHandleComponent->IsActive() && PhysicsHandleComponent->GetGrabbedComponent() != nullptr && !IsGlassMaterial(hitComp->GetMaterial(0)->GetMaterial()))
+						if (PhysicsHandleComponent->IsActive() && PhysicsHandleComponent->GetGrabbedComponent() != nullptr)
 						{
-							PhysicsHandleComponent->SetActive(false);
-							PhysicsHandleComponent->ReleaseComponent();
-
-							/*
-							// Grab point
-							FVector grabEnd = (spawnRotation.Vector() * GrabDistance);
-							FVector grabComp = PhysicsHandleComponent->GetGrabbedComponent()->GetComponentLocation() - start;
-							float distance = (grabComp - grabEnd).Size() - PhysicsHandleComponent->GetGrabbedComponent()->Bounds.BoxExtent.X/2;
-							UE_LOG(LogTemp, Warning, TEXT("Distance: %f"), distance);
-							if (distance > 200.0f)
+							float hitDistance = (start - outHit.Location).Size();
+							// check if beam is far from the grabbed object
+							//if (PhysicsHandleComponent->IsActive() && PhysicsHandleComponent->GetGrabbedComponent() != nullptr && !IsGlassMaterial(hitComp->GetMaterial(0)->GetMaterial()))
+							if (hitDistance <= GrabDistance)
 							{
-								// Beam disconnection
 								PhysicsHandleComponent->SetActive(false);
 								PhysicsHandleComponent->ReleaseComponent();
 							}
-							*/
+							else
+							{
+								// If we are not hitting the cube and the cube is not moving it means the cube is stucked
+								if (!StuckTimerHandle.IsValid())
+								{
+									GetWorld()->GetTimerManager().SetTimer(StuckTimerHandle, this, &UBeamComponent::OnStuck, 1.5f, false);
+								}
+								
+								/*
+								// Grab point
+								FVector grabEnd = (spawnRotation.Vector() * GrabDistance);
+								FVector grabComp = PhysicsHandleComponent->GetGrabbedComponent()->GetComponentLocation() - start;
+								float distance = (grabComp - grabEnd).Size() - PhysicsHandleComponent->GetGrabbedComponent()->Bounds.BoxExtent.X / 2;
+								UE_LOG(LogTemp, Warning, TEXT("Distance: %f"), distance);
+								if (distance > 200.0f)
+								{
+									// Beam disconnection
+									PhysicsHandleComponent->SetActive(false);
+									PhysicsHandleComponent->ReleaseComponent();
+								}
+								*/
+							}
 						}
+						
 					}
 				}
 			}
@@ -222,6 +243,15 @@ void UBeamComponent::ShootBeam(BeamMode Mode, float DeltaTime)
 
 }
 
+void UBeamComponent::OnStuck()
+{
+	if (PhysicsHandleComponent->IsActive())
+	{
+		PhysicsHandleComponent->SetActive(false);
+		PhysicsHandleComponent->ReleaseComponent();
+	}
+}
+
 FColor UBeamComponent::GetBeamColor(BeamMode Mode)
 {
 	FColor beamColor = FColor::White;
@@ -235,7 +265,7 @@ FColor UBeamComponent::GetBeamColor(BeamMode Mode)
 		beamColor = FColor::Red;
 		break;
 	
-	case BeamMode::BOTH:
+	case BeamMode::GRAB:
 		beamColor = FColor::Magenta;
 		break;
 	}

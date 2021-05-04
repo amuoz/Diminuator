@@ -125,6 +125,7 @@ void ADiminuatorCharacter::SetupPlayerInputComponent(class UInputComponent* Play
 	PlayerInputComponent->BindAction("Diminuator", IE_Released, this, &ADiminuatorCharacter::OnStopDiminuator);
 	PlayerInputComponent->BindAction("Augmentator", IE_Pressed, this, &ADiminuatorCharacter::OnStartAugmentator);
 	PlayerInputComponent->BindAction("Augmentator", IE_Released, this, &ADiminuatorCharacter::OnStopAugmentator);
+	PlayerInputComponent->BindAction("Reset", IE_Pressed, this, &ADiminuatorCharacter::OnReset);
 
 	PlayerInputComponent->BindAction("ResetVR", IE_Pressed, this, &ADiminuatorCharacter::OnResetVR);
 
@@ -179,6 +180,11 @@ void ADiminuatorCharacter::FireEffects()
 			AnimInstance->Montage_Play(FireAnimation, 1.f);
 		}
 	}
+}
+
+void ADiminuatorCharacter::OnReset()
+{
+	UGameplayStatics::OpenLevel(GetWorld(), FName(GetWorld()->GetName()));
 }
 
 void ADiminuatorCharacter::OnResetVR()

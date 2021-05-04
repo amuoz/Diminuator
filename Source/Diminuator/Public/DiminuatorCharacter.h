@@ -126,6 +126,8 @@ protected:
 
 	void FireEffects();
 
+	void OnReset();
+
 protected:
 	// APawn interface
 	virtual void SetupPlayerInputComponent(UInputComponent* InputComponent) override;

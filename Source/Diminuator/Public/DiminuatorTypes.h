@@ -9,5 +9,6 @@ enum BeamMode
 {
 	DIMINUATOR		UMETA(DisplayName = "DIMINUATOR"),
 	AUGMENTATOR		UMETA(DisplayName = "AUGMENTATOR"),
-	BOTH			UMETA(DisplayName = "BOTH"),
+	GRAB			UMETA(DisplayName = "GRAB"),
+	OFF				UMETA(DisplayName = "OFF"),
 };

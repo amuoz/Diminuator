@@ -44,9 +44,12 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Gameplay)
 	UMaterial* GlassMaterial;
 
+	/* Physics handle linear damping */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Gameplay)
+	float GrabLinearDamping;
+
 protected:
 
-	UPROPERTY(VisibleDefaultsOnly, Category = Physics)
 	UPhysicsHandleComponent* PhysicsHandleComponent;
 
 	// Controls beam activation
@@ -55,6 +58,8 @@ protected:
 	bool bAugmentatorActive;
 
 	float GrabDistance;
+
+	FTimerHandle StuckTimerHandle;
 
 public:
 
@@ -85,4 +90,6 @@ protected:
 	bool CheckVertexCollisions(UPrimitiveComponent* Component, FVector Direction, FVector Vertex);
 
 	bool IsGlassMaterial(const UMaterial* Material);
+
+	void OnStuck();
 };
