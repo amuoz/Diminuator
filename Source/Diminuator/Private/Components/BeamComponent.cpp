@@ -1,6 +1,4 @@
-// Fill out your copyright notice in the Description page of Project Settings.
-
-
+// Tequila Works test
 #include "Components/BeamComponent.h"
 
 #include "Engine/World.h"
@@ -17,29 +15,32 @@ UBeamComponent::UBeamComponent()
 	// off to improve performance if you don't need them.
 	PrimaryComponentTick.bCanEverTick = true;
 
-	// Default offset from the character location for projectiles to spawn
+	// Default offset from the character location
 	GunOffset = FVector(100.0f, 0.0f, 10.0f);
 
+	BeamState = BeamMode::OFF;
 	BeamRange = 100.0f;
 	BeamImpulse = 100.0f;
 	BeamScaleSpeed = 5.0f;
-	bDiminuatorActive = false;
-	bAugmentatorActive = false;
 	BeamThickness = 3.0f;
 	GrabLinearDamping = 60.0f;
+	DisconnectionTime = 1.0f;
+	MinSize = 0.3f;
 
 	// Physics handle 
 	PhysicsHandleComponent = CreateDefaultSubobject<UPhysicsHandleComponent>(TEXT("PhysicsHandleComponent"));
-	PhysicsHandleComponent->bInterpolateTarget = false;
-	PhysicsHandleComponent->bAllowConcurrentTick = true;
-	PhysicsHandleComponent->SetLinearDamping(GrabLinearDamping);
-	PhysicsHandleComponent->SetActive(false);
+	PhysicsHandleComponent->bInterpolateTarget = false;				// fast follow
+	PhysicsHandleComponent->SetLinearDamping(GrabLinearDamping);	// linear damping adjustment
+	PhysicsHandleComponent->SetActive(false);						// only active when needed
 }
 
 // Called when the game starts
 void UBeamComponent::BeginPlay()
 {
 	Super::BeginPlay();
+
+	// Safe cast because beam component is Within = DiminuatorCharacter
+	Character = Cast<ADiminuatorCharacter>(GetOwner());
 }
 
 // Called every frame
@@ -47,209 +48,192 @@ void UBeamComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorC
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
-	if (bDiminuatorActive && bAugmentatorActive)
+	// Beam is firing
+	if (IsBeamActive())
 	{
-		// if both beams are active, merge colors and no transformation is applied
-		ShootBeam(BeamMode::GRAB, DeltaTime);
+		ShootBeam(DeltaTime);
 	}
-	else if (bDiminuatorActive)
-	{
-		ShootBeam(BeamMode::DIMINUATOR, DeltaTime);
-	}
-	else if (bAugmentatorActive)
-	{
-		ShootBeam(BeamMode::AUGMENTATOR, DeltaTime);
-	}
-
 }
 
 void UBeamComponent::OnStartFire(BeamMode Mode)
 {
-	if (Mode == BeamMode::DIMINUATOR)
-	{
-		bDiminuatorActive = true;
-	}
-	else if (Mode == BeamMode::AUGMENTATOR)
-	{
-		bAugmentatorActive = true;
-	}
+	UpdateBeamState(Mode);
 }
 
 void UBeamComponent::OnStopFire(BeamMode Mode)
 {
-	if (Mode == BeamMode::DIMINUATOR)
-	{
-		bDiminuatorActive = false;
-	}
-	else if (Mode == BeamMode::AUGMENTATOR)
-	{
-		bAugmentatorActive = false;
-	}
+	UpdateBeamState(Mode);
 
+	// If beam is off release any grabbed object
 	if (!IsBeamActive())
 	{
-		if (PhysicsHandleComponent->IsActive())
-		{
-			PhysicsHandleComponent->SetActive(false);
-			PhysicsHandleComponent->ReleaseComponent();
-		}
+		TryReleaseObject();
 	}
-
 }
 
-void UBeamComponent::ShootBeam(BeamMode Mode, float DeltaTime)
+void UBeamComponent::ShootBeam(float DeltaTime)
 {
 	UWorld* const world = GetWorld();
 	if (world != nullptr)
 	{
-		// We can safely cast this because beam component is Within = DiminuatorCharacter
-		ADiminuatorCharacter* character = Cast<ADiminuatorCharacter>(GetOwner());
-		if (character != nullptr)
+		if (Character != nullptr)
 		{
 			FHitResult outHit;
-			const FRotator spawnRotation = character->GetControlRotation();
-			const FVector start = (character->GetFP_MuzzleLocation() != nullptr) ? character->GetFP_MuzzleLocation()->GetComponentLocation() : GetOwner()->GetActorLocation() + spawnRotation.RotateVector(GunOffset);
+			const FRotator spawnRotation = Character->GetControlRotation();
+			// The start location of the beam, important for all the logic
+			Start = (Character->GetFP_MuzzleLocation() != nullptr) ?
+				Character->GetFP_MuzzleLocation()->GetComponentLocation() :
+				GetOwner()->GetActorLocation() + spawnRotation.RotateVector(GunOffset);
 			// The end location of line trace is start added with the rotation vector gives forward vector in any rotation
-			FVector end = start + (spawnRotation.Vector() * BeamRange);
+			FVector end = Start + (spawnRotation.Vector() * BeamRange);
 			FCollisionQueryParams params;
 			params.AddIgnoredActor(GetOwner());
-			//const FName TraceTag("MyTraceTag");
-			//GetWorld()->DebugDrawTraceTag = TraceTag;
-			//params.TraceTag = TraceTag;
-
-			// if something is grabbed check if there is collision between the beam and the object ideal location
-			/*
-			if (Mode == BeamMode::GRAB && PhysicsHandleComponent->IsActive() && PhysicsHandleComponent->GetGrabbedComponent())
-			{
-				end = start + (spawnRotation.Vector() * GrabDistance);
-				params.AddIgnoredActor(PhysicsHandleComponent->GetGrabbedComponent()->GetOwner());
-			}
-			*/
 			
-			// Launch beam raycast searching for object
-			bool bHit = world->LineTraceSingleByChannel(outHit, start, end, ECollisionChannel::ECC_Visibility, params);
+			// Launch beam searching for objects
+			bool bHit = world->LineTraceSingleByChannel(outHit, Start, end, ECollisionChannel::ECC_Visibility, params);
 			if (bHit)
 			{
-				// Beam effect hit
-				DrawDebugLine(world, start, outHit.Location, GetBeamColor(Mode), false, -1.0f, 0, BeamThickness);
-
+				// Lets make sure hit component is valid
 				AActor* hitActor = outHit.GetActor();
-				UPrimitiveComponent* hitComp = outHit.GetComponent();
-				
-				// lets make sure the object is valid
-				if ((hitActor != nullptr) && (hitActor != GetOwner()) && (hitComp != nullptr))
+				HitComponent = outHit.GetComponent();
+				if ((hitActor != nullptr) && (hitActor != GetOwner()) && (HitComponent != nullptr))
 				{
-					// physics actor interaction
-					if (hitComp->IsSimulatingPhysics())
+					// A) Physics actor transformations
+					if (HitComponent->IsSimulatingPhysics())
 					{
-						if (Mode == BeamMode::GRAB)
-						{
-							GetWorld()->GetTimerManager().ClearTimer(StuckTimerHandle);
-
-							//FVector grabEnd = start + (spawnRotation.Vector() * (start - outHit.Location).Size());
-							if (hitComp != PhysicsHandleComponent->GetGrabbedComponent())
-							{
-								// The end location of line trace is start added with the rotation vector gives forward vector in any rotation
-								PhysicsHandleComponent->SetActive(true);
-								PhysicsHandleComponent->GrabComponentAtLocationWithRotation(hitComp, outHit.BoneName, hitComp->GetComponentLocation(), hitComp->GetComponentRotation());
-								//GrabDistance = (start - outHit.Location).Size();
-								GrabDistance = (start - hitComp->GetComponentLocation()).Size();
-								UE_LOG(LogTemp, Warning, TEXT("GrabDistance: %f"), GrabDistance);
-							}
-						}
-						else
-						{
-							if (PhysicsHandleComponent->IsActive())
-							{
-								PhysicsHandleComponent->SetActive(false);
-								PhysicsHandleComponent->ReleaseComponent();
-							}
-
-							// turn off physics for the object to freeze in the air
-							hitComp->SetSimulatePhysics(false);
-							FVector scaleTransformation = hitComp->GetRelativeScale3D() + GetBeamScale(Mode) * DeltaTime;
-							if (scaleTransformation.Size() > 0.2f)
-							{
-								if (scaleTransformation.Size() > hitComp->GetRelativeScale3D().Size())
-								{
-									if (!CheckScaleCollisions(hitComp))
-									{
-										hitComp->SetRelativeScale3D(scaleTransformation);
-									}
-								}
-								else
-								{
-									hitComp->SetRelativeScale3D(scaleTransformation);
-								}
-							}
-							// turn on physics to recalculate collisions in physics step
-							hitComp->SetSimulatePhysics(true);
-						}
+						BeamPhysicsLogic(DeltaTime);
 					}
-					// static actor hit
+					// B) Static actor non interactuable
 					else
 					{
-						if (PhysicsHandleComponent->IsActive() && PhysicsHandleComponent->GetGrabbedComponent() != nullptr)
+						// Dropping logic only if physics handle is active
+						if (PhysicsHandleComponent->IsActive())
 						{
-							float hitDistance = (start - outHit.Location).Size();
-							// check if beam is far from the grabbed object
-							//if (PhysicsHandleComponent->IsActive() && PhysicsHandleComponent->GetGrabbedComponent() != nullptr && !IsGlassMaterial(hitComp->GetMaterial(0)->GetMaterial()))
-							if (hitDistance <= GrabDistance)
-							{
-								PhysicsHandleComponent->SetActive(false);
-								PhysicsHandleComponent->ReleaseComponent();
-							}
-							else
-							{
-								// If we are not hitting the cube and the cube is not moving it means the cube is stucked
-								if (!StuckTimerHandle.IsValid())
-								{
-									GetWorld()->GetTimerManager().SetTimer(StuckTimerHandle, this, &UBeamComponent::OnStuck, 1.5f, false);
-								}
-								
-								/*
-								// Grab point
-								FVector grabEnd = (spawnRotation.Vector() * GrabDistance);
-								FVector grabComp = PhysicsHandleComponent->GetGrabbedComponent()->GetComponentLocation() - start;
-								float distance = (grabComp - grabEnd).Size() - PhysicsHandleComponent->GetGrabbedComponent()->Bounds.BoxExtent.X / 2;
-								UE_LOG(LogTemp, Warning, TEXT("Distance: %f"), distance);
-								if (distance > 200.0f)
-								{
-									// Beam disconnection
-									PhysicsHandleComponent->SetActive(false);
-									PhysicsHandleComponent->ReleaseComponent();
-								}
-								*/
-							}
+							float hitDistance = (Start - outHit.Location).Size();
+							BeamStaticLogic(hitDistance);
 						}
-						
 					}
 				}
 			}
+
+			// Track grabbed object
+			if (PhysicsHandleComponent->IsActive() && PhysicsHandleComponent->GetGrabbedComponent() != nullptr)
+			{
+				FVector grabEnd = Start + (spawnRotation.Vector() * GrabDistance);
+				PhysicsHandleComponent->SetTargetLocationAndRotation(grabEnd, PhysicsHandleComponent->GetGrabbedComponent()->GetComponentRotation());
+				BeamEffects(Start, grabEnd);	// Play beam effect
+			}
 			else
 			{
-				// Beam effect no collision
-				DrawDebugLine(world, start, end, GetBeamColor(Mode), false, -1.0f, 0, BeamThickness);
+				BeamEffects(Start, (bHit ? outHit.Location : end));	// Play beam effect
 			}
 
-			// check if grabbed something
-			if (PhysicsHandleComponent->IsActive() && PhysicsHandleComponent->GetGrabbedComponent())
-			{
-				FVector grabEnd = start + (spawnRotation.Vector() * GrabDistance);
-				PhysicsHandleComponent->SetTargetLocationAndRotation(grabEnd, PhysicsHandleComponent->GetGrabbedComponent()->GetComponentRotation());
-			}
 		}
 	}
-
 }
 
-void UBeamComponent::OnStuck()
+
+void UBeamComponent::BeamPhysicsLogic(float DeltaTime)
+{
+	// Grabbing Mode
+	if (BeamState == BeamMode::GRAB)
+	{
+		// We found an object, reset disconnection timer
+		GetWorld()->GetTimerManager().ClearTimer(StuckTimerHandle);
+		// If its a new object update physics handler
+		if (HitComponent != PhysicsHandleComponent->GetGrabbedComponent())
+		{
+			PhysicsHandleComponent->SetActive(true);
+			PhysicsHandleComponent->GrabComponentAtLocationWithRotation(HitComponent, NAME_None, HitComponent->GetComponentLocation(), HitComponent->GetComponentRotation());
+			// Grab distance needed for knowing if hits are behind or in front of the component
+			GrabDistance = (Start - HitComponent->GetComponentLocation()).Size();
+		}
+	}
+	// Scaling Mode
+	else
+	{
+		// Release object if physics handler active
+		TryReleaseObject();
+		FVector newScale3D = HitComponent->GetRelativeScale3D() + GetBeamScale(BeamState) * DeltaTime;
+		// If scaling up and collisions are clear or if scaling down and not min size reached
+		if(CheckScalingConditions(newScale3D))
+		{
+			// turn off physics before scale for cool effect of freeze in the air
+			HitComponent->SetSimulatePhysics(false);
+			HitComponent->SetRelativeScale3D(newScale3D);
+			// turn on physics to recalculate collisions in physics step
+			HitComponent->SetSimulatePhysics(true);
+		}
+	}
+}
+
+void UBeamComponent::BeamStaticLogic(float HitDistance)
+{
+	// If we hit something in between then release the cube inmediately
+	if (HitDistance <= GrabDistance)
+	{
+		TryReleaseObject();
+	}
+	// If we hit something in the back 1.the cube could be stucked or 2.we are moving too fast
+	else
+	{
+		// Launch disconnection timer, if we hit the cube again the timer will be cleared
+		if (!StuckTimerHandle.IsValid())
+		{
+			GetWorld()->GetTimerManager().SetTimer(StuckTimerHandle, this, &UBeamComponent::TryReleaseObject, DisconnectionTime, false);
+		}
+	}
+}
+
+void UBeamComponent::TryReleaseObject()
 {
 	if (PhysicsHandleComponent->IsActive())
 	{
-		PhysicsHandleComponent->SetActive(false);
 		PhysicsHandleComponent->ReleaseComponent();
+		PhysicsHandleComponent->SetActive(false);	
 	}
+}
+
+void UBeamComponent::BeamEffects(const FVector start, const FVector end)
+{
+	// Trail VFX and sound effects should be here
+	DrawDebugLine(GetWorld(), start, end, GetBeamColor(BeamState), false, -1.0f, 0, BeamThickness);	// development only
+}
+
+void UBeamComponent::UpdateBeamState(BeamMode NewMode)
+{
+	if (BeamState == BeamMode::OFF)
+	{
+		BeamState = NewMode;
+	}
+	else if (BeamState == BeamMode::GRAB)
+	{
+		if (NewMode == BeamMode::DIMINUATOR)
+		{
+			BeamState = BeamMode::AUGMENTATOR;
+		}
+		else if (NewMode == BeamMode::AUGMENTATOR)
+		{
+			BeamState = BeamMode::DIMINUATOR;
+		}
+	}
+	else
+	{
+		if (BeamState != NewMode)
+		{
+			BeamState = BeamMode::GRAB;
+		}
+		else
+		{
+			BeamState = BeamMode::OFF;
+		}
+	}
+}
+
+bool UBeamComponent::CheckScalingConditions(FVector newScale3D)
+{
+	return ((newScale3D.Size() > HitComponent->GetRelativeScale3D().Size() && !CheckScaleCollisions(HitComponent))
+		|| newScale3D.Size() < HitComponent->GetRelativeScale3D().Size() && newScale3D.Size() > MinSize);
 }
 
 FColor UBeamComponent::GetBeamColor(BeamMode Mode)
@@ -269,7 +253,6 @@ FColor UBeamComponent::GetBeamColor(BeamMode Mode)
 		beamColor = FColor::Magenta;
 		break;
 	}
-
 	return beamColor;
 }
 
@@ -285,94 +268,68 @@ float UBeamComponent::GetBeamScale(BeamMode Mode)
 		return BeamScaleSpeed;
 		break;
 	}
-
 	return 0.0f;
 }
 
 bool UBeamComponent::IsBeamActive()
 {
-	return bDiminuatorActive || bAugmentatorActive;
+	return BeamState != BeamMode::OFF;
 }
 
 bool UBeamComponent::CheckScaleCollisions(UPrimitiveComponent* component)
 {
-	if (component != nullptr)
-	{
-		FHitResult outHit;
-		FVector start = component->GetComponentLocation();
-		float length = component->Bounds.SphereRadius/2;
-		float size = length/4;
-		FCollisionQueryParams params;
-		params.AddIgnoredActor(component->GetOwner());
-		const FName TraceTag("MyTraceTag");
-		GetWorld()->DebugDrawTraceTag = TraceTag;
-		params.TraceTag = TraceTag;
+	bool bUp1 = CheckVertexCollisions(component, FVector::UpVector, FVector::UpVector + FVector::LeftVector + FVector::ForwardVector);
+	bool bUp2 = CheckVertexCollisions(component, FVector::UpVector, FVector::UpVector + FVector::LeftVector + FVector::BackwardVector);
+	bool bUp3 = CheckVertexCollisions(component, FVector::UpVector, FVector::UpVector + FVector::RightVector + FVector::ForwardVector);
+	bool bUp4 = CheckVertexCollisions(component, FVector::UpVector, FVector::UpVector + FVector::RightVector + FVector::BackwardVector);
+	bool bUp = bUp1 || bUp2 || bUp3 || bUp4;
 
-		//bool bUp = GetWorld()->LineTraceSingleByChannel(outHit, start, (start + FVector::UpVector * length), ECollisionChannel::ECC_Visibility, params);
-		bool bUp1 = CheckVertexCollisions(component, FVector::UpVector, FVector::UpVector + FVector::LeftVector + FVector::ForwardVector);
-		bool bUp2 = CheckVertexCollisions(component, FVector::UpVector, FVector::UpVector + FVector::LeftVector + FVector::BackwardVector);
-		bool bUp3 = CheckVertexCollisions(component, FVector::UpVector, FVector::UpVector + FVector::RightVector + FVector::ForwardVector);
-		bool bUp4 = CheckVertexCollisions(component, FVector::UpVector, FVector::UpVector + FVector::RightVector + FVector::BackwardVector);
-		bool bUp = bUp1 || bUp2 || bUp3 || bUp4;
+	bool bDown1 = CheckVertexCollisions(component, FVector::DownVector, FVector::DownVector + FVector::LeftVector + FVector::ForwardVector);
+	bool bDown2 = CheckVertexCollisions(component, FVector::DownVector, FVector::DownVector + FVector::LeftVector + FVector::BackwardVector);
+	bool bDown3 = CheckVertexCollisions(component, FVector::DownVector, FVector::DownVector + FVector::RightVector + FVector::ForwardVector);
+	bool bDown4 = CheckVertexCollisions(component, FVector::DownVector, FVector::DownVector + FVector::RightVector + FVector::BackwardVector);
+	bool bDown = bDown1 || bDown2 || bDown3 || bDown4;
 
-		//bool bDown = GetWorld()->LineTraceSingleByChannel(outHit, start, (start + FVector::DownVector * length), ECollisionChannel::ECC_Visibility, params);
-		bool bDown1 = CheckVertexCollisions(component, FVector::DownVector, FVector::DownVector + FVector::LeftVector + FVector::ForwardVector);
-		bool bDown2 = CheckVertexCollisions(component, FVector::DownVector, FVector::DownVector + FVector::LeftVector + FVector::BackwardVector);
-		bool bDown3 = CheckVertexCollisions(component, FVector::DownVector, FVector::DownVector + FVector::RightVector + FVector::ForwardVector);
-		bool bDown4 = CheckVertexCollisions(component, FVector::DownVector, FVector::DownVector + FVector::RightVector + FVector::BackwardVector);
-		bool bDown = bDown1 || bDown2 || bDown3 || bDown4;
+	bool bLeft1 = CheckVertexCollisions(component, FVector::LeftVector, FVector::LeftVector + FVector::UpVector + FVector::ForwardVector);
+	bool bLeft2 = CheckVertexCollisions(component, FVector::LeftVector, FVector::LeftVector + FVector::UpVector + FVector::BackwardVector);
+	bool bLeft3 = CheckVertexCollisions(component, FVector::LeftVector, FVector::LeftVector + FVector::DownVector + FVector::ForwardVector);
+	bool bLeft4 = CheckVertexCollisions(component, FVector::LeftVector, FVector::LeftVector + FVector::DownVector + FVector::BackwardVector);
+	bool bLeft = bLeft1 || bLeft2 || bLeft3 || bLeft4;
 
-		//bool bLeft = GetWorld()->LineTraceSingleByChannel(outHit, start, (start + FVector::LeftVector * length), ECollisionChannel::ECC_Visibility, params);
-		bool bLeft1 = CheckVertexCollisions(component, FVector::LeftVector, FVector::LeftVector + FVector::UpVector + FVector::ForwardVector);
-		bool bLeft2 = CheckVertexCollisions(component, FVector::LeftVector, FVector::LeftVector + FVector::UpVector + FVector::BackwardVector);
-		bool bLeft3 = CheckVertexCollisions(component, FVector::LeftVector, FVector::LeftVector + FVector::DownVector + FVector::ForwardVector);
-		bool bLeft4 = CheckVertexCollisions(component, FVector::LeftVector, FVector::LeftVector + FVector::DownVector + FVector::BackwardVector);
-		bool bLeft = bLeft1 || bLeft2 || bLeft3 || bLeft4;
+	bool bRight1 = CheckVertexCollisions(component, FVector::RightVector, FVector::RightVector + FVector::UpVector + FVector::ForwardVector);
+	bool bRight2 = CheckVertexCollisions(component, FVector::RightVector, FVector::RightVector + FVector::UpVector + FVector::BackwardVector);
+	bool bRight3 = CheckVertexCollisions(component, FVector::RightVector, FVector::RightVector + FVector::DownVector + FVector::ForwardVector);
+	bool bRight4 = CheckVertexCollisions(component, FVector::RightVector, FVector::RightVector + FVector::DownVector + FVector::BackwardVector);
+	bool bRight = bRight1 || bRight2 || bRight3 || bRight4;
 
-		//bool bRight = GetWorld()->LineTraceSingleByChannel(outHit, start, (start + FVector::RightVector * length), ECollisionChannel::ECC_Visibility, params);
-		bool bRight1 = CheckVertexCollisions(component, FVector::RightVector, FVector::RightVector + FVector::UpVector + FVector::ForwardVector);
-		bool bRight2 = CheckVertexCollisions(component, FVector::RightVector, FVector::RightVector + FVector::UpVector + FVector::BackwardVector);
-		bool bRight3 = CheckVertexCollisions(component, FVector::RightVector, FVector::RightVector + FVector::DownVector + FVector::ForwardVector);
-		bool bRight4 = CheckVertexCollisions(component, FVector::RightVector, FVector::RightVector + FVector::DownVector + FVector::BackwardVector);
-		bool bRight = bRight1 || bRight2 || bRight3 || bRight4;
+	bool bForward1 = CheckVertexCollisions(component, FVector::ForwardVector, FVector::ForwardVector + FVector::UpVector + FVector::LeftVector);
+	bool bForward2 = CheckVertexCollisions(component, FVector::ForwardVector, FVector::ForwardVector + FVector::UpVector + FVector::RightVector);
+	bool bForward3 = CheckVertexCollisions(component, FVector::ForwardVector, FVector::ForwardVector + FVector::DownVector + FVector::LeftVector);
+	bool bForward4 = CheckVertexCollisions(component, FVector::ForwardVector, FVector::ForwardVector + FVector::DownVector + FVector::RightVector);
+	bool bForward = bForward1 || bForward2 || bForward3 || bForward4;
 
-		//bool bForward = GetWorld()->LineTraceSingleByChannel(outHit, start, (start + FVector::ForwardVector * length), ECollisionChannel::ECC_Visibility, params);
-		bool bForward1 = CheckVertexCollisions(component, FVector::ForwardVector, FVector::ForwardVector + FVector::UpVector + FVector::LeftVector);
-		bool bForward2 = CheckVertexCollisions(component, FVector::ForwardVector, FVector::ForwardVector + FVector::UpVector + FVector::RightVector);
-		bool bForward3 = CheckVertexCollisions(component, FVector::ForwardVector, FVector::ForwardVector + FVector::DownVector + FVector::LeftVector);
-		bool bForward4 = CheckVertexCollisions(component, FVector::ForwardVector, FVector::ForwardVector + FVector::DownVector + FVector::RightVector);
-		bool bForward = bForward1 || bForward2 || bForward3 || bForward4;
+	bool bBackward1 = CheckVertexCollisions(component, FVector::BackwardVector, FVector::BackwardVector + FVector::UpVector + FVector::LeftVector);
+	bool bBackward2 = CheckVertexCollisions(component, FVector::BackwardVector, FVector::BackwardVector + FVector::UpVector + FVector::RightVector);
+	bool bBackward3 = CheckVertexCollisions(component, FVector::BackwardVector, FVector::BackwardVector + FVector::DownVector + FVector::LeftVector);
+	bool bBackward4 = CheckVertexCollisions(component, FVector::BackwardVector, FVector::BackwardVector + FVector::DownVector + FVector::RightVector);
+	bool bBackward = bBackward1 || bBackward2 || bBackward3 || bBackward4;
 
-		//bool bBackward = GetWorld()->LineTraceSingleByChannel(outHit, start, (start + FVector::BackwardVector * length), ECollisionChannel::ECC_Visibility, params);
-		bool bBackward1 = CheckVertexCollisions(component, FVector::BackwardVector, FVector::BackwardVector + FVector::UpVector + FVector::LeftVector);
-		bool bBackward2 = CheckVertexCollisions(component, FVector::BackwardVector, FVector::BackwardVector + FVector::UpVector + FVector::RightVector);
-		bool bBackward3 = CheckVertexCollisions(component, FVector::BackwardVector, FVector::BackwardVector + FVector::DownVector + FVector::LeftVector);
-		bool bBackward4 = CheckVertexCollisions(component, FVector::BackwardVector, FVector::BackwardVector + FVector::DownVector + FVector::RightVector);
-		bool bBackward = bBackward1 || bBackward2 || bBackward3 || bBackward4;
-
-		return (bUp && bDown) || (bLeft && bRight) || (bForward && bBackward);
-	}
-
-	return false;
+	return (bUp && bDown) || (bLeft && bRight) || (bForward && bBackward);
 }
 
-bool UBeamComponent::IsGlassMaterial(const UMaterial* Material)
-{
-	return Material->GetName().Equals(GlassMaterial->GetName());
-}
-
-bool UBeamComponent::CheckVertexCollisions(UPrimitiveComponent* component, FVector direction, FVector vertex)
+bool UBeamComponent::CheckVertexCollisions(UPrimitiveComponent* component, const FVector direction, const FVector vertexDirection)
 {
 	FHitResult outHit;
-	float length = component->Bounds.SphereRadius / 2;
-	float size = length / 4;
+	float cubeHalfLength = component->Bounds.SphereRadius / 2.0f;	// cube width
+	float size = cubeHalfLength / 4;	// ray size
 	FCollisionQueryParams params;
 	params.AddIgnoredActor(component->GetOwner());
-	//const FName TraceTag("MyTraceTag");
+	//const FName TraceTag("TraceTag");
 	//GetWorld()->DebugDrawTraceTag = TraceTag;
 	//params.TraceTag = TraceTag;
 
-	FVector start = component->GetComponentLocation() + component->GetComponentRotation().RotateVector(vertex * length);
+	// Calculate vertex position by adding cube half length to the center in vertex direction.
+	FVector start = component->GetComponentLocation() + component->GetComponentRotation().RotateVector(vertexDirection * cubeHalfLength);
 	FVector end = start + component->GetComponentRotation().RotateVector(direction) * size;
 	return GetWorld()->LineTraceSingleByChannel(outHit, start, end, ECollisionChannel::ECC_WorldStatic, params);
 }
